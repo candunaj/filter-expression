@@ -1,0 +1,14 @@
+{
+  "name": "filter-expression",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "jscodeshift -t index.js transform.ts",
+    "execute": "jscodeshift -t index.js ~/bmc/smartexchange.ui/app",
+    "execute1": "jscodeshift -t index.js ~/bmc/smartexchange.ui/app/pods/components/manage-project/tab/component.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC"
+}
