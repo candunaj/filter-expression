@@ -1,4 +1,4 @@
-export const parser = 'tsx'
+export const parser = 'ts';
 
 function removeImport(ast, j){
   ast.find(j.ImportDeclaration, {
@@ -68,6 +68,7 @@ function ensureImport(ast, j, importName, defaultImportName){
 
 
 function refactorCreate(ast, j, objectName, newObjectName, mainImport, getArguments){
+  let somethingChanged = false;
   ast.find(j.CallExpression, {
     callee: {
       object:{
@@ -79,17 +80,20 @@ function refactorCreate(ast, j, objectName, newObjectName, mainImport, getArgume
     }
   })
   .forEach(path => {
-    mainImport();
-    const arg = path?.value.arguments?.[0];
-    let filter;
-    if(arg && arg.properties){
-      const newArguments = getArguments(arg.properties);
-      filter = j.newExpression(j.identifier(newObjectName), newArguments);
-    }else{
-      filter = j.newExpression(j.identifier(newObjectName), []);
-    }
-    path.replace(filter);
+    somethingChanged = true;
+      mainImport();
+      const arg = path?.value.arguments?.[0];
+      let filter;
+      if(arg && arg.properties){
+        const newArguments = getArguments(arg.properties);
+        filter = j.newExpression(j.identifier(newObjectName), newArguments);
+      }else{
+        filter = j.newExpression(j.identifier(newObjectName), []);
+      }
+      path.replace(filter);
   });
+
+  return somethingChanged;
 }
 
 function removeMixin(ast, j){
@@ -106,7 +110,7 @@ function removeMixin(ast, j){
     }
 
     if(path.node.arguments.length === 0){
-      path.replace(j.identifier('Component'));
+      path.replace(j.identifier(path.node.callee.object.name));
     }
   });
 }
@@ -116,9 +120,7 @@ export default function transformer(file, api) {
   const j = api.jscodeshift;
 
   const ast = j(file.source);
-  removeImport(ast, j);
-  removeMixin(ast, j);
-  refactorCreate(ast, j, 'Expressions', 'Query', ()=>ensureImport(ast, j, undefined, 'Query'), (properties)=>{
+  const changed1 = refactorCreate(ast, j, 'Expressions', 'Query', ()=>ensureImport(ast, j, 'Query', undefined), (properties)=>{
     let operator = properties.find(p=>p?.key?.name==='operator')?.value;
     if(operator){
       ensureImport(ast, j, 'QueryOperators');
@@ -128,7 +130,7 @@ export default function transformer(file, api) {
     return [];
   });
 
-  refactorCreate(ast, j, 'Filter', 'Filter', ()=>ensureImport(ast, j, 'Filter'), (properties)=>{
+  const changed2 = refactorCreate(ast, j, 'Filter', 'Filter', ()=>ensureImport(ast, j, 'Filter'), (properties)=>{
     const name = properties.find(p=>p?.key?.name==='name')?.value ?? j.identifier('undefined');
     const operator = properties.find(p=>p?.key?.name==='operator')?.value ?? j.identifier('undefined');
     if(operator?.object?.name==='FilterOperators'){
@@ -138,7 +140,7 @@ export default function transformer(file, api) {
     return [name, operator, value];
   });
 
-  refactorCreate(ast, j, 'RangeFilter', 'RangeFilter', ()=>ensureImport(ast, j, 'RangeFilter'), (properties)=>{
+  const changed3 = refactorCreate(ast, j, 'RangeFilter', 'RangeFilter', ()=>ensureImport(ast, j, 'RangeFilter'), (properties)=>{
     // name, value1, value2
     const name = properties.find(p=>p?.key?.name==='name')?.value ?? j.identifier('undefined');
     const value1 = properties.find(p=>p?.key?.name==='value1')?.value ?? j.identifier('undefined');
@@ -146,7 +148,7 @@ export default function transformer(file, api) {
     return [name, value1, value2];
   });
 
-  refactorCreate(ast, j, 'DateRangeFilter', 'DateRangeFilter', ()=>ensureImport(ast, j, 'DateRangeFilter'), (properties)=>{
+  const changed4 = refactorCreate(ast, j, 'DateRangeFilter', 'DateRangeFilter', ()=>ensureImport(ast, j, 'DateRangeFilter'), (properties)=>{
     // name, value1, value2, dateFormat
     const name = properties.find(p=>p?.key?.name==='name')?.value ?? j.identifier('undefined');
     const value1 = properties.find(p=>p?.key?.name==='value1')?.value ?? j.identifier('undefined');
@@ -154,6 +156,17 @@ export default function transformer(file, api) {
     const dateFormat = properties.find(p=>p?.key?.name==='dateFormat')?.value ?? j.identifier('undefined');
     return [name, value1, value2, dateFormat];
   });
+
+  if(changed1 || changed2 || changed3 || changed4){
+    if(ast.find(j.Identifier, {
+      name: 'FilterOperators',
+    }).length){
+      ensureImport(ast, j, 'FilterOperators');
+    }
+
+    removeImport(ast, j);
+    removeMixin(ast, j);
+  }
 
   const source = ast.toSource();
   return source;
