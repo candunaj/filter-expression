@@ -12,6 +12,9 @@ function removeImport(ast, j){
 
 
 function ensureImport(ast, j, importName, defaultImportName){
+  if(!ast.find(j.Program).length){
+    return;
+  }
   // import QueryOperators if not imported
   // import { QueryOperators } from 'smex-ui-models/utils/query-builder';
 
@@ -66,6 +69,18 @@ function ensureImport(ast, j, importName, defaultImportName){
   }
 }
 
+function getDecorators(ast, j){
+  let asts = [];
+  ast.find(j.ClassProperty).forEach(path=>{
+    if(path.node.decorators?.length){
+      const dec = path.node.decorators.find(d=>d.expression?.arguments?.length);
+      if(dec){
+        asts.push(j(dec.expression.arguments[0]));
+      }
+    }
+  });
+  return asts;
+}
 
 function refactorCreate(ast, j, objectName, newObjectName, mainImport, getArguments){
   let somethingChanged = false;
@@ -80,6 +95,7 @@ function refactorCreate(ast, j, objectName, newObjectName, mainImport, getArgume
     }
   })
   .forEach(path => {
+    // if(path.node?.callee?.object?.name === objectName && path.node?.callee?.property?.name === 'create'){
     somethingChanged = true;
       mainImport();
       const arg = path?.value.arguments?.[0];
@@ -91,6 +107,7 @@ function refactorCreate(ast, j, objectName, newObjectName, mainImport, getArgume
         filter = j.newExpression(j.identifier(newObjectName), []);
       }
       path.replace(filter);
+      // }
   });
 
   return somethingChanged;
@@ -119,56 +136,66 @@ function removeMixin(ast, j){
 export default function transformer(file, api) {
   const j = api.jscodeshift;
 
-  const ast = j(file.source);
-  const changed1 = refactorCreate(ast, j, 'Expressions', 'Query', ()=>ensureImport(ast, j, 'Query', undefined), (properties)=>{
-    let operator = properties.find(p=>p?.key?.name==='operator')?.value;
-    if(operator){
-      ensureImport(ast, j, 'QueryOperators');
-      operator.object.name = 'QueryOperators';
-      return [operator]; 
+  const baseAst = j(file.source);
+  const asts = [baseAst, ...getDecorators(baseAst, j)];
+
+  let change = false;
+
+  for(let ast of asts){
+    const ch1 = refactorCreate(ast, j, 'Expressions', 'Query', ()=>ensureImport(ast, j, 'Query', undefined), (properties)=>{
+      let operator = properties.find(p=>p?.key?.name==='operator')?.value;
+      if(operator){
+        ensureImport(ast, j, 'QueryOperators');
+        operator.object.name = 'QueryOperators';
+        return [operator]; 
+      }
+      return [];
+    });
+
+    const ch2 = refactorCreate(ast, j, 'Filter', 'Filter', ()=>ensureImport(ast, j, 'Filter'), (properties)=>{
+      const name = properties.find(p=>p?.key?.name==='name')?.value ?? j.identifier('undefined');
+      const operator = properties.find(p=>p?.key?.name==='operator')?.value ?? j.identifier('undefined');
+      if(operator?.object?.name==='FilterOperators'){
+        ensureImport(ast, j, 'FilterOperators');
+      }
+      const value = properties.find(p=>p?.key?.name==='value')?.value ?? j.identifier('undefined');
+      return [name, operator, value];
+    });
+
+    const ch3 = refactorCreate(ast, j, 'RangeFilter', 'RangeFilter', ()=>ensureImport(ast, j, 'RangeFilter'), (properties)=>{
+      // name, value1, value2
+      const name = properties.find(p=>p?.key?.name==='name')?.value ?? j.identifier('undefined');
+      const value1 = properties.find(p=>p?.key?.name==='value1')?.value ?? j.identifier('undefined');
+      const value2 = properties.find(p=>p?.key?.name==='value2')?.value ?? j.identifier('undefined');
+      return [name, value1, value2];
+    });
+
+    const ch4 = refactorCreate(ast, j, 'DateRangeFilter', 'DateRangeFilter', ()=>ensureImport(ast, j, 'DateRangeFilter'), (properties)=>{
+      // name, value1, value2, dateFormat
+      const name = properties.find(p=>p?.key?.name==='name')?.value ?? j.identifier('undefined');
+      const value1 = properties.find(p=>p?.key?.name==='value1')?.value ?? j.identifier('undefined');
+      const value2 = properties.find(p=>p?.key?.name==='value2')?.value ?? j.identifier('undefined');
+      const dateFormat = properties.find(p=>p?.key?.name==='dateFormat')?.value ?? j.identifier('undefined');
+      return [name, value1, value2, dateFormat];
+    });
+
+    if(ch1 || ch2 || ch3 || ch4){
+      change = true;
     }
-    return [];
-  });
-
-  const changed2 = refactorCreate(ast, j, 'Filter', 'Filter', ()=>ensureImport(ast, j, 'Filter'), (properties)=>{
-    const name = properties.find(p=>p?.key?.name==='name')?.value ?? j.identifier('undefined');
-    const operator = properties.find(p=>p?.key?.name==='operator')?.value ?? j.identifier('undefined');
-    if(operator?.object?.name==='FilterOperators'){
-      ensureImport(ast, j, 'FilterOperators');
-    }
-    const value = properties.find(p=>p?.key?.name==='value')?.value ?? j.identifier('undefined');
-    return [name, operator, value];
-  });
-
-  const changed3 = refactorCreate(ast, j, 'RangeFilter', 'RangeFilter', ()=>ensureImport(ast, j, 'RangeFilter'), (properties)=>{
-    // name, value1, value2
-    const name = properties.find(p=>p?.key?.name==='name')?.value ?? j.identifier('undefined');
-    const value1 = properties.find(p=>p?.key?.name==='value1')?.value ?? j.identifier('undefined');
-    const value2 = properties.find(p=>p?.key?.name==='value2')?.value ?? j.identifier('undefined');
-    return [name, value1, value2];
-  });
-
-  const changed4 = refactorCreate(ast, j, 'DateRangeFilter', 'DateRangeFilter', ()=>ensureImport(ast, j, 'DateRangeFilter'), (properties)=>{
-    // name, value1, value2, dateFormat
-    const name = properties.find(p=>p?.key?.name==='name')?.value ?? j.identifier('undefined');
-    const value1 = properties.find(p=>p?.key?.name==='value1')?.value ?? j.identifier('undefined');
-    const value2 = properties.find(p=>p?.key?.name==='value2')?.value ?? j.identifier('undefined');
-    const dateFormat = properties.find(p=>p?.key?.name==='dateFormat')?.value ?? j.identifier('undefined');
-    return [name, value1, value2, dateFormat];
-  });
-
-  if(changed1 || changed2 || changed3 || changed4){
-    if(ast.find(j.Identifier, {
-      name: 'FilterOperators',
-    }).length){
-      ensureImport(ast, j, 'FilterOperators');
-    }
-
-    removeImport(ast, j);
-    removeMixin(ast, j);
   }
 
-  const source = ast.toSource();
+  if(change){
+    if(baseAst.find(j.Identifier, {
+      name: 'FilterOperators',
+    }).length){
+      ensureImport(baseAst, j, 'FilterOperators');
+    }
+
+    removeImport(baseAst, j);
+    removeMixin(baseAst, j);
+  }
+
+  const source = baseAst.toSource();
   return source;
   // console.log(source);
 }
